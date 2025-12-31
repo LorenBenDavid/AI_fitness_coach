@@ -2,8 +2,6 @@ import cv2
 import math
 import time
 import mediapipe as mp
-import mediapipe.python.solutions.pose as mp_pose
-import mediapipe.python.solutions.drawing_utils as mp_drawing
 
 
 class poseDetector():
@@ -17,8 +15,8 @@ class poseDetector():
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
 
-        self.mpPose = mp_pose
-        self.mpDraw = mp_drawing
+        self.mpPose = mp.solutions.pose
+        self.mpDraw = mp.solutions.drawing_utils
 
         self.pose = self.mpPose.Pose(
             static_image_mode=self.static_image_mode,

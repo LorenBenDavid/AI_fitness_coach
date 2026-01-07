@@ -80,6 +80,7 @@ def process_video_stream(url, exercise_name, view_type, detector, label):
         'quiet': True,
         'no_warnings': True,
         'proxy': "",
+
     }
 
     try:
@@ -129,7 +130,7 @@ if __name__ == "__main__":
     detector = poseDetector(model_complexity=1)
 
     # Goal: 100 videos for each type of exercise/form/view
-    VIDEOS_PER_SEARCH = 2
+    VIDEOS_PER_SEARCH = 100
 
     # Binary Labeling: 1 for Correct Form, 0 for Common Mistakes
     search_modes = [

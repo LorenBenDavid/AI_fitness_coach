@@ -1,0 +1,16 @@
+# --- Core AI & Machine Learning ---
+tensorflow-macos==2.15.0
+keras==2.15.0
+numpy==1.26.4
+scikit-learn==1.3.2
+joblib==1.3.2
+
+# --- Vision & Pose Estimation ---
+mediapipe==0.10.9
+opencv-python==4.8.1.78
+
+# --- Data Handling ---
+pandas==2.1.3
+
+# --- Mac M1/M2 Performance (Optional but recommended) ---
+tensorflow-metal==1.1.0

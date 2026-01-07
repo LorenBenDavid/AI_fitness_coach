@@ -1,115 +1,123 @@
 import os
 import pandas as pd
 import numpy as np
-import keras
+import joblib
+import tensorflow as tf
+from tensorflow import keras
 from keras import Model
 from keras.layers import LSTM, Dense, Dropout, Input
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-import joblib
+from sklearn.preprocessing import StandardScaler
 
-# Configuration - Ensure these filenames match your folder exactly
+# --- Configuration ---
+# Updated paths based on your folder structure: Data_Sets/Final/
 FILES = [
-    "Dataset_Squat.csv",
-    "Dataset_Sumo_Deadlift.csv",
-    "Dataset_Conventional_Deadlift.csv",
-    "Dataset_Bench_Press.csv"
+    "Data_Sets/Final/Dataset_Squat.csv",
+    "Data_Sets/Final/Dataset_Sumo_Deadlift.csv",
+    "Data_Sets/Final/Dataset_Conventional_Deadlift.csv",
+    "Data_Sets/Final/Dataset_Bench_Press.csv"
 ]
-# 30 frames = approx 1 second of video. Essential for movement analysis.
-WINDOW_SIZE = 30
+
+WINDOW_SIZE = 30  # Number of frames per sequence for the LSTM
 
 
 def create_sequences(data, tech_labels, exercise_labels, window_size):
     """
     Transforms flat rows into 3D sequences (Samples, Time_Steps, Features).
-    This allows the LSTM to 'see' the motion over time.
     """
     X, y_tech, y_ex = [], [], []
     for i in range(len(data) - window_size):
-        # Extract a window of frames
         X.append(data[i: i + window_size])
-        # We take the label of the last frame in the sequence as the target
         y_tech.append(tech_labels[i + window_size - 1])
         y_ex.append(exercise_labels[i + window_size - 1])
     return np.array(X), np.array(y_tech), np.array(y_ex)
 
 
 def train_unified_model():
-    all_X = []
-    all_y_tech = []
-    all_y_ex = []
+    print("📂 Step 1: Loading datasets from Data_Sets/Final/...")
 
-    # Pre-configure encoders
-    exercise_encoder = LabelEncoder()
-    exercise_names = [f.replace("Dataset_", "").replace(
-        ".csv", "") for f in FILES]
-    exercise_encoder.fit(exercise_names)
-    scaler = StandardScaler()
+    all_dfs = []
 
-    print("📂 Step 1: Loading and Sequencing Data...")
-
+    # 1. Load each CSV file from the specific subfolder
     for file in FILES:
         if os.path.exists(file):
-            # Load CSV - skip lines with errors
-            df = pd.read_csv(file, on_bad_lines='skip')
-
-            # Extract Labels: Technique (0/1) and Exercise Name
-            y_tech_raw = df['Label'].values
-            exercise_name = file.replace("Dataset_", "").replace(".csv", "")
-            y_ex_raw = np.full(
-                len(df), exercise_encoder.transform([exercise_name])[0])
-
-            # Select only Numeric Columns (Landmarks) and drop non-numeric labels
-            X_numeric = df.select_dtypes(include=[np.number]).drop(
-                ['Label'], axis=1, errors='ignore').values
-
-            # Normalize data (Scale to 0-1 range roughly)
-            X_scaled = scaler.fit_transform(X_numeric)
-
-            # Create sequences per file to prevent mixing different exercises at the boundaries
-            X_seq, y_tech_seq, y_ex_seq = create_sequences(
-                X_scaled, y_tech_raw, y_ex_raw, WINDOW_SIZE)
-
-            all_X.append(X_seq)
-            all_y_tech.append(y_tech_seq)
-            all_y_ex.append(y_ex_seq)
-            print(f"✅ Processed {file} into {len(X_seq)} sequences.")
+            df = pd.read_csv(file)
+            all_dfs.append(df)
+            print(f"✅ Loaded {file} successfully.")
         else:
-            print(f"⚠️ Warning: {file} not found. Skipping.")
+            print(f"❌ Error: {file} NOT found. Check if the path is correct.")
 
-    # Combine all sequences into one master dataset
-    X_final = np.concatenate(all_X)
-    y_tech_final = np.concatenate(all_y_tech)
-    y_ex_final = np.concatenate(all_y_ex)
+    if not all_dfs:
+        print("❌ No data available. Training aborted.")
+        return
 
-    # Split into 80% Training and 20% Testing (with Shuffling)
+    # 2. Combine all data
+    master_df = pd.concat(all_dfs, axis=0, ignore_index=True)
+    master_df = master_df.fillna(0)
+
+    # 3. Separate Features and Targets
+    # We drop 'Technique' and 'Exercise_Label' to keep only numeric landmarks in X
+    X_raw = master_df.drop(['Technique', 'Exercise_Label'],
+                           axis=1, errors='ignore').values
+    y_tech_raw = master_df['Technique'].values
+    y_ex_raw = master_df['Exercise_Label'].values
+
+    print(f"📊 Total frames loaded: {X_raw.shape[0]}")
+    print(f"📊 Features per frame: {X_raw.shape[1]} (33 landmarks expected)")
+
+    # 4. Global Scaling
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_raw)
+
+    # 5. Create Sequences (Processing each exercise separately to avoid data mixing)
+    all_X_seq, all_y_tech_seq, all_y_ex_seq = [], [], []
+    start_idx = 0
+
+    for df in all_dfs:
+        end_idx = start_idx + len(df)
+
+        X_group = X_scaled[start_idx:end_idx]
+        y_t_group = df['Technique'].values
+        y_e_group = df['Exercise_Label'].values
+
+        X_s, yt_s, ye_s = create_sequences(
+            X_group, y_t_group, y_e_group, WINDOW_SIZE)
+
+        if len(X_s) > 0:
+            all_X_seq.append(X_s)
+            all_y_tech_seq.append(yt_s)
+            all_y_ex_seq.append(ye_s)
+
+        start_idx = end_idx
+
+    X_final = np.concatenate(all_X_seq)
+    y_tech_final = np.concatenate(all_y_tech_seq)
+    y_ex_final = np.concatenate(all_y_ex_seq)
+
+    # 6. Split into Training and Testing sets
     X_train, X_test, y_tech_train, y_tech_test, y_ex_train, y_ex_test = train_test_split(
-        X_final, y_tech_final, y_ex_final, test_size=0.2, random_state=42
+        X_final, y_tech_final, y_ex_final, test_size=0.2, random_state=42, shuffle=True
     )
 
-    # Should be (Samples, 30, Landmarks)
-    print(f"📊 Training set size: {X_train.shape}")
+    print(f"🧠 Step 2: Building Multi-Output LSTM Architecture...")
 
-    print("🧠 Step 2: Building Multi-Output LSTM Model...")
-    # Define input layer matching our window size and number of landmarks
+    # --- Model Definition ---
     inputs = Input(shape=(WINDOW_SIZE, X_train.shape[2]))
 
-    # LSTM Layers - Processing the movement flow
+    # LSTM Layers
     x = LSTM(128, return_sequences=True)(inputs)
-    x = Dropout(0.3)(x)  # Dropout to prevent memorizing data (Overfitting)
+    x = Dropout(0.3)(x)
     x = LSTM(64)(x)
     x = Dropout(0.3)(x)
 
-    # Head 1: Binary Output for Technique (0 = Bad, 1 = Good)
+    # Branch 1: Technique Quality (Good/Bad)
     tech_out = Dense(1, activation='sigmoid', name='technique_output')(x)
 
-    # Head 2: Multi-class Output for Exercise Identification
-    ex_out = Dense(len(exercise_encoder.classes_),
-                   activation='softmax', name='exercise_output')(x)
+    # Branch 2: Exercise Classification (0, 1, 2, 3)
+    ex_out = Dense(4, activation='softmax', name='exercise_output')(x)
 
     model = Model(inputs=inputs, outputs=[tech_out, ex_out])
 
-    # Compiling with metrics for EACH output to avoid the ValueError
     model.compile(
         optimizer='adam',
         loss={
@@ -122,23 +130,23 @@ def train_unified_model():
         }
     )
 
-    print("\n🚀 Step 3: Training on Sequences (20 Epochs)...")
-    # Training the master model
+    print("\n🚀 Step 3: Starting Training Process...")
+
     model.fit(
         X_train,
         {'technique_output': y_tech_train, 'exercise_output': y_ex_train},
         validation_data=(
             X_test, {'technique_output': y_tech_test, 'exercise_output': y_ex_test}),
-        epochs=20,
-        batch_size=64
+        epochs=30,
+        batch_size=32
     )
 
-    # Step 4: Save model and helper files for the app
-    model.save("powerlifting_sequence_model.keras")
+    # --- Step 4: Save Model & Scaler ---
+    print("\n💾 Step 4: Saving final assets...")
+    model.save("powerlifting_unified_model.keras")
     joblib.dump(scaler, "master_scaler.pkl")
-    joblib.dump(exercise_encoder, "exercise_encoder.pkl")
 
-    print("\n🏆 Training finished successfully! Files saved.")
+    print("\n🏆 DONE! The model and scaler are ready for live detection.")
 
 
 if __name__ == "__main__":

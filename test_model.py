@@ -4,111 +4,124 @@ import keras
 import joblib
 import os
 import mediapipe as mp
+from collections import Counter
 
-# 1. Setup MediaPipe with direct access to solutions
-mp_pose = mp.solutions.pose
-mp_drawing = mp.solutions.drawing_utils
-pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+# --- CONFIGURATION ---
+MODEL_PATH = "powerlifting_unified_model.keras"
+SCALER_PATH = "master_scaler.pkl"
+VIDEO_PATH = "MyVideos/Tests/bad-sd.mp4"
+WINDOW_SIZE = 30
 
-# 2. Load the trained model and helper files
-# Make sure these files are in the same folder as this script
-print("🔄 Loading Model, Scaler, and Encoder...")
+EXERCISE_MAP = {
+    0: "Squat",
+    1: "Bench Press",
+    2: "Sumo Deadlift",
+    3: "Conventional Deadlift"
+}
+
+SELECTED_LANDMARKS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27]
+
+print("🔄 Loading AI Model and Scaler...")
 try:
-    model = keras.models.load_model("powerlifting_sequence_model.keras")
-    scaler = joblib.load("master_scaler.pkl")
-    exercise_encoder = joblib.load("exercise_encoder.pkl")
-    print("✅ All model files loaded successfully!")
+    model = keras.models.load_model(MODEL_PATH)
+    scaler = joblib.load(SCALER_PATH)
+    print("✅ Load Successful.")
 except Exception as e:
     print(f"❌ Error loading files: {e}")
     exit()
 
-# 3. Video Configuration
-video_path = "PoseVideos/2.mov"
-if not os.path.exists(video_path):
-    print(f"❌ Error: Video file not found at {video_path}")
-    exit()
+# Lists to store results for final feedback
+exercise_results = []
+technique_results = []
 
-cap = cv2.VideoCapture(video_path)
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
+pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-# Buffer to store sequences (Must be same as WINDOW_SIZE used in training)
-WINDOW_SIZE = 30
+cap = cv2.VideoCapture(VIDEO_PATH)
 sequence_buffer = []
 
-print(f"🎬 Processing video: {video_path} (Press 'q' to stop)")
+print(f"🎬 Starting analysis on: {VIDEO_PATH}")
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        print("🏁 End of video or cannot read file.")
         break
 
-    # Resize frame for better performance on Mac
-    frame = cv2.resize(frame, (640, 480))
-
-    # Convert to RGB for MediaPipe
-    image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = pose.process(image_rgb)
+    frame = cv2.resize(frame, (800, 600))
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = pose.process(rgb_frame)
 
     if results.pose_landmarks:
-        # Draw skeleton on the frame
         mp_drawing.draw_landmarks(
             frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
-        # Extract Landmark coordinates (x, y, z, visibility)
-        landmarks = []
-        for lm in results.pose_landmarks.landmark:
-            landmarks.extend([lm.x, lm.y, lm.z, lm.visibility])
+        current_frame_data = []
+        for idx in SELECTED_LANDMARKS:
+            landmark = results.pose_landmarks.landmark[idx]
+            current_frame_data.extend(
+                [landmark.x, landmark.y, landmark.visibility])
 
-        # Add current frame's landmarks to buffer
-        sequence_buffer.append(landmarks)
+        sequence_buffer.append(current_frame_data)
 
-        # Only predict if we have enough frames for a full sequence (30 frames)
         if len(sequence_buffer) == WINDOW_SIZE:
-            # Prepare data: Convert to numpy array and scale
-            input_data = np.array(sequence_buffer)
-            input_data_scaled = scaler.transform(input_data)
+            input_array = np.array(sequence_buffer)
+            input_scaled = scaler.transform(input_array)
+            input_reshaped = input_scaled.reshape(1, WINDOW_SIZE, 33)
 
-            # Reshape to (1, 30, Features) to match model input
-            input_data_reshaped = input_data_scaled.reshape(1, WINDOW_SIZE, -1)
+            # Prediction
+            predictions = model.predict(input_reshaped, verbose=0)
 
-            # Perform Prediction
-            # prediction[0] is Technique, prediction[1] is Exercise Type
-            prediction = model.predict(input_data_reshaped, verbose=0)
+            # Technique logic
+            tech_score = predictions[0][0][0]
+            is_good = tech_score > 0.5
+            technique_results.append(is_good)
 
-            tech_prob = prediction[0][0][0]  # Probability of "Good" technique
-            # Probabilities for each exercise class
-            ex_prob = prediction[1][0]
+            tech_label = "GOOD" if is_good else "BAD"
+            tech_color = (0, 255, 0) if is_good else (0, 0, 255)
 
-            # Identify the exercise name
-            ex_index = np.argmax(ex_prob)
-            ex_name = exercise_encoder.inverse_transform([ex_index])[0]
+            # Exercise logic
+            ex_probs = predictions[1][0]
+            ex_idx = np.argmax(ex_probs)
+            ex_name = EXERCISE_MAP.get(ex_idx, "Unknown")
+            exercise_results.append(ex_name)
 
-            # Define Feedback based on 0.5 threshold
-            feedback = "GOOD" if tech_prob > 0.5 else "BAD"
-            color = (0, 255, 0) if feedback == "GOOD" else (
-                0, 0, 255)  # Green for Good, Red for Bad
-
-            # UI: Display Exercise Name and Feedback on frame
-            # Black background for text
-            cv2.rectangle(frame, (10, 10), (400, 120), (0, 0, 0), -1)
-            cv2.putText(frame, f"Exercise: {ex_name}", (20, 45),
+            # Live UI
+            cv2.rectangle(frame, (10, 10), (450, 110), (0, 0, 0), -1)
+            cv2.putText(frame, f"EXERCISE: {ex_name.upper()}", (20, 45),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(frame, f"Technique: {feedback}", (20, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-            cv2.putText(frame, f"Confidence: {tech_prob:.2f}", (240, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            cv2.putText(frame, f"TECHNIQUE: {tech_label} ({tech_score:.2f})", (20, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, tech_color, 3)
 
-            # Slide the window: remove the oldest frame
             sequence_buffer.pop(0)
 
-    # Show the final processed frame
-    cv2.imshow('Powerlifting AI Feedback', frame)
-
-    # Exit if 'q' is pressed
+    cv2.imshow('Powerlifting AI - Live Analysis', frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Cleanup
 cap.release()
 cv2.destroyAllWindows()
-print("👋 Process finished.")
+
+# --- FINAL FEEDBACK SECTION ---
+print("\n" + "="*30)
+print("📊 FINAL ANALYSIS REPORT")
+print("="*30)
+
+if exercise_results and technique_results:
+    # 1. Final Exercise Identification (Most common prediction)
+    final_exercise = Counter(exercise_results).most_common(1)[0][0]
+
+    # 2. Final Technique Assessment
+    good_count = sum(technique_results)
+    total_count = len(technique_results)
+    good_percentage = (good_count / total_count) * 100
+
+    final_tech_label = "GOOD FORM ✅" if good_percentage > 70 else "BAD FORM ❌"
+
+    print(f"🔹 Detected Exercise: {final_exercise}")
+    print(f"🔹 Form Consistency: {good_percentage:.1f}% Good Frames")
+    print(f"🔹 Final Verdict: {final_tech_label}")
+else:
+    print("❌ Not enough data was collected for a final report.")
+
+print("="*30)

@@ -1,0 +1,26 @@
+# --- Core AI & Machine Learning (Your Original List) ---
+tensorflow-macos==2.15.0
+keras==2.15.0
+numpy==1.26.4
+scikit-learn==1.3.2
+joblib==1.3.2
+
+# --- Vision & Pose Estimation ---
+mediapipe==0.10.9
+opencv-python==4.8.1.78
+
+# --- Data Handling ---
+pandas==2.1.3
+
+# --- Mac M1/M2 Performance ---
+tensorflow-metal==1.1.0
+
+# --- Web Server & API (Added for Flask & React) ---
+flask==3.0.0
+flask-cors==4.0.0
+werkzeug==3.0.1
+gunicorn==21.2.0
+
+# --- Utilities ---
+h5py==3.10.0
+python-dotenv==1.0.0

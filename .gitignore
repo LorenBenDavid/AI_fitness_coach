@@ -1,0 +1,5 @@
+backend/venv_311/
+node_modules/
+*.mp4
+MyVideos/
+.DS_Store
